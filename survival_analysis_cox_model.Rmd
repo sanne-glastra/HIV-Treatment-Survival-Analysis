@@ -1,0 +1,686 @@
+---
+title: "Survival Analysis of HIV Treatment Efficacy"
+subtitle: "Comparative Analysis of 3-Drug vs 2-Drug Regimens"
+author: "Sanne Glastra"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+# Data Preparation
+
+### global settings
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+### read libraries
+```{r}
+library(tableone)
+library(officer)
+library(flextable)
+library(ggsurvfit)
+library(survival)
+library(tibble)
+library(dplyr)
+```
+
+### read csv
+```{r}
+data <- read.csv("hiv_clinical_trial_data.csv")
+```
+
+### recode variables
+```{r}
+# raceeth variable -- combine variables
+data$raceth <- ifelse(data$raceth %in% c(3, 4, 5, 6), 3, data$raceth)
+
+# ivdrug variable -- combine variables
+data$ivdrug <- ifelse(data$ivdrug %in% c(2, 3), 2, data$ivdrug)
+
+# karnof variable -- combine variables
+data$karnof <- ifelse(data$karnof %in% c(80, 70), 80, data$karnof)
+```
+
+### define outcome variables
+```{r}
+# define pfs variables
+data$time_pfs <- data$time
+data$censor_pfs <- data$censor
+
+# define os variables
+data$time_os <- data$time_d
+data$censor_os <- data$censor_d
+```
+
+
+# Create Table 1: Baseline Characteristics
+```{r}
+# specify which variables want to use in table 1
+allVars = c("sex", "raceth", "age", "karnof","strat2", "cd4", "ivdrug", "hemophil","priorzdv")
+
+# specify which variables are categorical variables
+catVars = c("sex", "raceth", "ivdrug", "hemophil", "strat2", "karnof")
+
+# Define labels for categorical variables
+sex_levels <- c("1" = "Male", "2" = "Female")
+raceth_levels <- c(
+  "1" = "White Non-Hispanic",
+  "2" = "Black Non-Hispanic",
+  "3" = "Other/unknown")
+ivdrug_levels <- c("1" = "Never", "2" = "Currently/Previously")
+hemophil_levels <- c("1" = "Yes", "0" = "No")
+strat2_levels <- c("0" = "CD4 ≤ 50", "1" = "CD4 > 50")
+karnof_levels <- c(
+  "100" = "No evidence of disease",
+  "90" = "Minor signs/symptoms of disease",
+  "80" = "Some signs/symptoms of disease or cares for self")
+tx_levels <- c("1" = "Three-drug regimen including IDV", "0" = "Two-drug regimen without IDV")
+
+# Convert categorical variables to factors
+data1 <- data
+data1$sex <- factor(data$sex, levels = names(sex_levels), labels = sex_levels)
+data1$raceth <- factor(data$raceth, levels = names(raceth_levels), labels = raceth_levels)
+data1$ivdrug <- factor(data$ivdrug, levels = names(ivdrug_levels), labels = ivdrug_levels)
+data1$hemophil <- factor(data$hemophil, levels = names(hemophil_levels), labels = hemophil_levels)
+data1$strat2 <- factor(data$strat2, levels = names(strat2_levels), labels = strat2_levels)
+data1$karnof <- factor(data$karnof, levels = names(karnof_levels), labels = karnof_levels)
+data1$tx <- factor(data$tx, levels = names(tx_levels), labels = tx_levels)
+
+
+# create baseline table 
+descriptives_tableone <- tableone::CreateTableOne(data = data1, 
+                                                  vars = allVars,
+                                                  factorVars = catVars,
+                                                  strata = "tx",
+                                                  test = T,
+                                                  addOverall = TRUE)
+
+# print baseline table (showing all levels and using median(iqr))
+descriptives_tableone <- print(descriptives_tableone,
+                               nonnormal = allVars, # specify which variables to use median(iqr)
+                               showAllLevels = TRUE)
+
+# print table to word
+descriptives_tableone %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Characteristic") %>%
+  flextable() %>%
+  # Bold headers
+  bold(part = "header") %>%
+  # Set font to Times New Roman, size to 12
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 11, part = "all") %>%
+  # Add borders only below the header and in specific locations
+  hline_top(border = fp_border(color = "black", width = 1.5), part = "header") %>%
+  hline_bottom(border = fp_border(color = "black", width = 1.5), part = "body") %>% # Bottom border
+  # Add padding for readability
+  padding(padding = 5, part = "all") %>% 
+  flextable::save_as_docx(path = "descriptives_tableone.docx") 
+```
+
+
+# Survival Curve Analysis and Log-Rank
+### PFS treatment comparison
+```{r}
+survfit2(Surv(time_pfs, censor_pfs)~tx, data=data1) %>%
+  ggsurvfit() +
+  add_censor_mark() +
+  add_pvalue(location="annotation",
+             caption="Log-rank {p.value}") +
+  labs(title = "Kaplan-Meier Survival Curves - Progression Free Survival (PFS)")  
+```
+
+### OS treatment comparison
+```{r}
+survfit2(Surv(time_os, censor_os)~tx, data=data1) %>%
+  ggsurvfit() +
+  add_censor_mark() +
+  add_pvalue(location="annotation",
+             caption="Log-rank {p.value}") +
+  labs(title = "Kaplan-Meier Survival Curves - Overall Survival (OS)")  
+```
+
+
+# Univariate Analysis - PFS 
+
+### process categorical data so it can be read correctly by cox model
+```{r}
+# make all categorical data into factors
+data = data %>%
+  mutate(sex = factor(sex,levels=c("1","2")),
+         tx = factor(tx,levels=c("0","1")),
+         raceth = factor(raceth,levels=c("3","1","2")),
+         karnof = factor(karnof,levels=c("80","90", "100")),
+         strat2 = factor(strat2,levels=c("0","1")),
+         ivdrug = factor(ivdrug,levels=c("1","2")),
+         hemophil = factor(hemophil,levels=c("0","1")))
+```
+
+
+### fit cox model for each covariate individually 
+```{r}
+# treatment
+fit_tx_pfs = coxph(Surv(time_pfs, censor_pfs)~tx,data=data,
+            ties="efron")
+
+# age
+fit_age_pfs = coxph(Surv(time_pfs, censor_pfs)~age,data=data,
+            ties="efron")
+# sex
+fit_sex_pfs = coxph(Surv(time_pfs, censor_pfs)~sex,data=data,
+            ties="efron")
+
+# race / ethnicity
+fit_raceth_pfs = coxph(Surv(time_pfs, censor_pfs)~raceth,data=data,
+            ties="efron")
+
+# karnofsky performance scale
+fit_karnof_pfs = coxph(Surv(time_pfs, censor_pfs)~karnof,data=data,
+            ties="efron")
+
+# cd4 stratum at screening
+fit_strat2_pfs = coxph(Surv(time_pfs, censor_pfs)~strat2,data=data,
+            ties="efron")
+
+# baseline cd4 count
+fit_cd4_pfs = coxph(Surv(time_pfs, censor_pfs)~cd4,data=data,
+            ties="efron")
+
+# iv drug use history
+fit_ivdrug_pfs = coxph(Surv(time_pfs, censor_pfs)~ivdrug,data=data,
+            ties="efron")
+
+# hemophiliac
+fit_hemophil_pfs = coxph(Surv(time_pfs, censor_pfs)~hemophil,data=data,
+            ties="efron")
+
+# months of prior zdv use
+fit_priorzdv_pfs = coxph(Surv(time_pfs, censor_pfs)~priorzdv,data=data,
+            ties="efron")
+```
+
+
+### place all HR / CI results into table and export to word
+```{r}
+# make a list of all models
+models <- list(
+  tx = fit_tx_pfs,
+  age = fit_age_pfs,
+  sex = fit_sex_pfs,
+  raceth = fit_raceth_pfs,
+  karnof = fit_karnof_pfs,
+  strat2 = fit_strat2_pfs,
+  cd4 = fit_cd4_pfs,
+  ivdrug = fit_ivdrug_pfs,
+  hemophil = fit_hemophil_pfs,
+  priorzdv = fit_priorzdv_pfs
+)
+
+# function to extract exp(coef) and 95% CI 
+extract_coefs <- function(fit) {
+  summary_fit <- summary(fit)
+  exp_coef <- summary_fit$coefficients[, "exp(coef)"]
+  lower_95 <- summary_fit$conf.int[, "lower .95"]
+  upper_95 <- summary_fit$conf.int[, "upper .95"]
+  p_value <- summary(fit)$coefficients[, "Pr(>|z|)"]
+  
+  return(data.frame(HR = round(exp_coef,2), Lower_CI = round(lower_95,2), Upper_CI = round(upper_95, 2),
+                    P_Value = round(p_value,3)))
+}
+
+# apply the extraction function and combine into single dataframe
+results_list <- lapply(models, extract_coefs)
+results_df <- do.call(rbind, results_list)
+results_df$CI <- paste0("[", results_df$Lower_CI, ", ", results_df$Upper_CI, "]")
+  
+# print table
+univariate_table_pfs <- print(results_df)
+
+# print table to word
+univariate_table_pfs %>% 
+  select(HR, CI, P_Value) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Characteristic") %>%
+  flextable() %>%
+  # Bold headers
+  bold(part = "header") %>%
+  # Set font to Times New Roman, size to 12
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 11, part = "all") %>%
+  # Add borders only below the header and in specific locations
+  hline_top(border = fp_border(color = "black", width = 1.5), part = "header") %>%
+  hline_bottom(border = fp_border(color = "black", width = 1.5), part = "body") %>% # Bottom border
+  # Add padding for readability
+  padding(padding = 5, part = "all") %>% 
+  flextable::save_as_docx(path = "univariate_table_pfs.docx") 
+```
+
+
+# Univariate Analysis - OS 
+
+### fit cox model for each covariate individually 
+```{r}
+# treatment
+fit_tx_os = coxph(Surv(time_os, censor_os)~tx,data=data,
+            ties="efron")
+
+# age
+fit_age_os = coxph(Surv(time_os, censor_os)~age,data=data,
+            ties="efron")
+# sex
+fit_sex_os = coxph(Surv(time_os, censor_os)~sex,data=data,
+            ties="efron")
+
+# race / ethnicity
+fit_raceth_os = coxph(Surv(time_os, censor_os)~raceth,data=data,
+            ties="efron")
+
+# karnofsky performance scale
+fit_karnof_os = coxph(Surv(time_os, censor_os)~karnof,data=data,
+            ties="efron")
+
+# cd4 stratum at screening
+fit_strat2_os = coxph(Surv(time_os, censor_os)~strat2,data=data,
+            ties="efron")
+
+# baseline cd4 count
+fit_cd4_os = coxph(Surv(time_os, censor_os)~cd4,data=data,
+            ties="efron")
+
+# iv drug use history
+fit_ivdrug_os = coxph(Surv(time_os, censor_os)~ivdrug,data=data,
+            ties="efron")
+
+# hemophiliac
+fit_hemophil_os = coxph(Surv(time_os, censor_os)~hemophil,data=data,
+            ties="efron")
+
+# months of prior zdv use
+fit_priorzdv_os = coxph(Surv(time_os, censor_os)~priorzdv,data=data,
+            ties="efron")
+```
+
+
+### place all HR / CI results into table and export to word
+```{r}
+# make a list of all models
+models <- list(
+  tx = fit_tx_os,
+  age = fit_age_os,
+  sex = fit_sex_os,
+  raceth = fit_raceth_os,
+  karnof = fit_karnof_os,
+  strat2 = fit_strat2_os,
+  cd4 = fit_cd4_os,
+  ivdrug = fit_ivdrug_os,
+  hemophil = fit_hemophil_os,
+  priorzdv = fit_priorzdv_os
+)
+
+# function to extract exp(coef) and 95% CI 
+extract_coefs <- function(fit) {
+  summary_fit <- summary(fit)
+  exp_coef <- summary_fit$coefficients[, "exp(coef)"]
+  lower_95 <- summary_fit$conf.int[, "lower .95"]
+  upper_95 <- summary_fit$conf.int[, "upper .95"]
+  p_value <- summary(fit)$coefficients[, "Pr(>|z|)"]
+  
+  return(data.frame(HR = round(exp_coef,2), Lower_CI = round(lower_95,2), Upper_CI = round(upper_95, 2),
+                    P_Value = round(p_value,3)))
+}
+
+# apply the extraction function and combine into single dataframe
+results_list <- lapply(models, extract_coefs)
+results_df <- do.call(rbind, results_list)
+results_df$CI <- paste0("[", results_df$Lower_CI, ", ", results_df$Upper_CI, "]")
+
+# print table
+univariate_table_os <- print(results_df)
+
+# print table to word
+univariate_table_os %>% 
+  select(HR, CI, P_Value) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Characteristic") %>%
+  flextable() %>%
+  # Bold headers
+  bold(part = "header") %>%
+  # Set font to Times New Roman, size to 12
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 11, part = "all") %>%
+  # Add borders only below the header and in specific locations
+  hline_top(border = fp_border(color = "black", width = 1.5), part = "header") %>%
+  hline_bottom(border = fp_border(color = "black", width = 1.5), part = "body") %>% # Bottom border
+  # Add padding for readability
+  padding(padding = 5, part = "all") %>% 
+  flextable::save_as_docx(path = "univariate_table_os.docx") 
+```
+
+# Multivariate Analysis - PFS
+
+### create different multivariate models (full and reduced)
+```{r}
+# the following variables were significant in the univariate pfs analysis:
+## karnof
+## strat2
+## cd4
+
+# we will always add tx, age, and sex to our multivariate model
+
+# first, we will fit the full model with all significant / relevant variables from univariate analysis 
+full_model <- coxph(Surv(time_pfs, censor_pfs)~tx+age+sex+karnof+strat2+cd4,
+                    data = data, ties="efron")
+
+# next, we will try reduced models by removing one variable and comparing it to the full model
+## without karnof
+reduced_model1 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + strat2 + cd4, data = data) 
+## without strat2
+reduced_model2 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4, data = data)
+## without cd4
+reduced_model3 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + strat2, data = data)
+## without karnof and strat2
+reduced_model4 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + cd4, data = data) 
+## without karnof and cd4
+reduced_model5 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + strat2, data = data)
+## without cd4 and strat2
+reduced_model6 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof , data = data)
+## without cd4, strat2, and karnof
+reduced_model7 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex , data = data)
+
+```
+
+### create function to compare full and reduced models 
+```{r}
+# Function to compare full and reduced models
+compare_cox_models <- function(full_model, reduced_model) {
+  # Calculate log-likelihood difference
+  loglik_diff <- 2 * (logLik(full_model) - logLik(reduced_model))
+  
+  # Calculate degrees of freedom difference
+  df_diff <- attr(logLik(full_model), "df") - attr(logLik(reduced_model), "df")
+  
+  # Get p-value from chi-squared distribution
+  p_value <- pchisq(loglik_diff, df = df_diff, lower.tail = F)
+  
+  # Print result
+  cat("Log-Likelihood Difference: ", loglik_diff, "\n")
+  cat("Degrees of Freedom Difference: ", df_diff, "\n")
+  cat("p-value: ", p_value, "\n")
+}
+```
+
+### compare models
+```{r}
+# full model vs. reduced model 1
+compare_cox_models(full_model, reduced_model1) # sign so full model is better
+
+# full model vs. reduced model 2
+compare_cox_models(full_model, reduced_model2) # not sign, so can use reduced model
+
+# full model vs. reduced model 3
+compare_cox_models(full_model, reduced_model3) # sign so full model is better
+
+# full model vs. reduced model 4
+compare_cox_models(full_model, reduced_model4) # sign so full model is better
+
+# full model vs. reduced model 5
+compare_cox_models(full_model, reduced_model5) # sign so full model is better
+
+# full model vs. reduced model 6
+compare_cox_models(full_model, reduced_model6) # sign so full model is better
+
+# full model vs. reduced model 7
+compare_cox_models(full_model, reduced_model7) # sign so full model is better
+
+# therefore, we will continue with reduced model 2
+
+```
+
+### assess confounding
+```{r}
+# Function to assess confounding based on model coefficients
+assess_confounding <- function(full_model, reduced_model) {
+  # Extract the coefficients for tx from both models
+  tx_full <- full_model$coefficients[1]
+  tx_reduced <- reduced_model$coefficients[1]
+  
+  # Calculate the percent change
+  percent_change <- 100 * (tx_reduced - tx_full) / tx_full
+  
+  # Return the results
+  percent_change
+}
+```
+
+```{r}
+# compare reduced_model2 with and without cd4
+assess_confounding(reduced_model2, reduced_model6) # percent change is 7.1%
+
+# compare reduced_model2 with and without karnof
+assess_confounding(reduced_model2, reduced_model4) # percent change is 0.01%
+
+# both of these percentages are small enough, so we will move on with both cd4 and karnof in our model
+
+```
+
+
+### assess interaction terms (effect modifiers)
+```{r}
+reduced_model2_1 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4 + tx*cd4, 
+                          data = data)
+# not sign
+
+reduced_model2_2 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4 + tx*karnof, 
+                          data = data)
+# not sign
+
+reduced_model2_3 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4 + tx*sex, 
+                          data = data)
+# not sign
+
+reduced_model2_4 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4 + tx*age, 
+                          data = data)
+# not sign
+```
+
+### now we will proceed with our final model
+```{r}
+reduced_model2 <- coxph(Surv(time_pfs, censor_pfs) ~ tx + age + sex + karnof + cd4, data = data)
+summary(reduced_model2)
+```
+
+### place all HR / CI results into table and export to word
+```{r}
+# function to extract exp(coef) and 95% CI 
+extract_coefs <- function(fit) {
+  summary_fit <- summary(fit)
+  exp_coef <- summary_fit$coefficients[, "exp(coef)"]
+  lower_95 <- summary_fit$conf.int[, "lower .95"]
+  upper_95 <- summary_fit$conf.int[, "upper .95"]
+  p_value <- summary(fit)$coefficients[, "Pr(>|z|)"]
+  
+  return(data.frame(HR = round(exp_coef,2), Lower_CI = round(lower_95,2), Upper_CI = round(upper_95, 2),
+                    P_Value = round(p_value,3)))
+}
+
+# apply the extraction function and combine into single dataframe
+results <- extract_coefs(reduced_model2)
+results$CI <- paste0("[", results$Lower_CI, ", ", results$Upper_CI, "]")
+
+# print table
+multivariate_table_pfs <- print(results)
+
+# print table to word
+multivariate_table_pfs %>% 
+  select(HR, CI, P_Value) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Characteristic") %>%
+  flextable() %>%
+  # Bold headers
+  bold(part = "header") %>%
+  # Set font to Times New Roman, size to 12
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 11, part = "all") %>%
+  # Add borders only below the header and in specific locations
+  hline_top(border = fp_border(color = "black", width = 1.5), part = "header") %>%
+  hline_bottom(border = fp_border(color = "black", width = 1.5), part = "body") %>% # Bottom border
+  # Add padding for readability
+  padding(padding = 5, part = "all") %>% 
+  flextable::save_as_docx(path = "multivariate_table_pfs.docx") 
+```
+
+# Multivariate Analysis - OS
+
+### create different multivariate models (full and reduced)
+```{r}
+# the following variables were significant in the univariate pfs analysis:
+## karnof
+## strat2
+## cd4
+
+# we will always add tx, age, and sex to our multivariate model
+
+# first, we will fit the full model with all significant / relevant variables from univariate analysis 
+full_model <- coxph(Surv(time_os, censor_os)~tx+age+sex+karnof+strat2+cd4,
+                    data = data, ties="efron")
+
+# next, we will try reduced models by removing one variable and comparing it to the full model
+## without karnof
+reduced_model1 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + strat2 + cd4, data = data) 
+## without strat2
+reduced_model2 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + karnof + cd4, data = data)
+## without cd4
+reduced_model3 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + karnof + strat2, data = data)
+## without karnof and strat2
+reduced_model4 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + cd4, data = data) 
+## without karnof and cd4
+reduced_model5 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + strat2, data = data)
+## without cd4 and strat2
+reduced_model6 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex + karnof, data = data)
+## without cd4, strat2, and karnof
+reduced_model7 <- coxph(Surv(time_os, censor_os) ~ tx + age + sex , data = data)
+
+```
+
+### compare models (using previously created function)
+```{r}
+# full model vs. reduced model 1
+compare_cox_models(full_model, reduced_model1) # sign so full model is better
+
+# full model vs. reduced model 2
+compare_cox_models(full_model, reduced_model2) # not sign, so can use reduced model
+
+# full model vs. reduced model 3
+compare_cox_models(full_model, reduced_model3) # not sign, so can use reduced model
+
+# full model vs. reduced model 4
+compare_cox_models(full_model, reduced_model4) # sign so full model is better
+
+# full model vs. reduced model 5
+compare_cox_models(full_model, reduced_model5) # sign so full model is better
+
+# full model vs. reduced model 6
+compare_cox_models(full_model, reduced_model6) # sign so full model is better
+
+# full model vs. reduced model 7
+compare_cox_models(full_model, reduced_model7) # sign so full model is better
+
+# therefore, we will continue with reduced model 2 and reduced model 3
+
+```
+
+### assess confounding (using previously created function)
+
+```{r}
+# compare reduced_model2 with and without cd4
+assess_confounding(reduced_model2, reduced_model6) # percent change is 2.0%
+
+# compare reduced_model2 with and without karnof
+assess_confounding(reduced_model2, reduced_model4) # percent change is 4.955%
+
+# both of these percentages are small enough, so we will move on with both cd4 and karnof in our model
+
+# compare reduced_model2 with and without strat2
+assess_confounding(reduced_model3, reduced_model6) # percent change is 2.53%
+
+# compare reduced_model2 with and without karnof
+assess_confounding(reduced_model3, reduced_model4) # percent change is 0.027%
+
+# therefore, both reduced_model2 and reduced_model3 don't have a significant confounders. however, reduced_model3 has less confounding than reduced_model2.
+
+```
+
+### check the significance of covariates in both models to see which ones are more significant
+
+```{r}
+summary(reduced_model2)
+summary(reduced_model3)
+
+# covariates in reduced_model3 have overall lower p values than in reduced_model3
+```
+
+### as a result, even though both reduced_model2 and reduced_model3 are effective models, reduced_model3 has slightly less confounding and slightly more significance
+
+### assess interaction terms (effect modifiers)
+```{r}
+reduced_model3_1 <- coxph(formula = Surv(time_os, censor_os) ~ tx + age + sex + karnof + strat2 + tx*karnof, data = data)
+# not sign
+
+reduced_model3_2 <- coxph(formula = Surv(time_os, censor_os) ~ tx + age + sex + karnof + strat2 + tx*strat2, data = data)
+# not sign
+
+reduced_model3_3 <- coxph(formula = Surv(time_os, censor_os) ~ tx + age + sex + karnof + strat2 + tx*age, data = data)
+# not sign
+
+reduced_model3_4 <- coxph(formula = Surv(time_os, censor_os) ~ tx + age + sex + karnof + strat2 + tx*sex, data = data)
+# not sign
+```
+
+### now we will proceed with our final model
+```{r}
+reduced_model3 <- coxph(Surv(time, censor) ~ tx + age + sex + karnof + strat2, data = data)
+summary(reduced_model3)
+```
+
+### place all HR / CI results into table and export to word
+```{r}
+# function to extract exp(coef) and 95% CI 
+extract_coefs <- function(fit) {
+  summary_fit <- summary(fit)
+  exp_coef <- summary_fit$coefficients[, "exp(coef)"]
+  lower_95 <- summary_fit$conf.int[, "lower .95"]
+  upper_95 <- summary_fit$conf.int[, "upper .95"]
+  p_value <- summary(fit)$coefficients[, "Pr(>|z|)"]
+  
+  return(data.frame(HR = round(exp_coef,2), Lower_CI = round(lower_95,2), Upper_CI = round(upper_95, 2),
+                    P_Value = round(p_value,3)))
+}
+
+# apply the extraction function and combine into single dataframe
+results <- extract_coefs(reduced_model3)
+results$CI <- paste0("[", results$Lower_CI, ", ", results$Upper_CI, "]")
+
+# print table
+multivariate_table_os <- print(results)
+
+# print table to word
+multivariate_table_os %>% 
+  select(HR, CI, P_Value) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Covariate") %>%
+  flextable() %>%
+  # Bold headers
+  bold(part = "header") %>%
+  # Set font to Times New Roman, size to 12
+  font(fontname = "Times New Roman", part = "all") %>%
+  fontsize(size = 11, part = "all") %>%
+  # Add borders only below the header and in specific locations
+  hline_top(border = fp_border(color = "black", width = 1.5), part = "header") %>%
+  hline_bottom(border = fp_border(color = "black", width = 1.5), part = "body") %>% # Bottom border
+  # Add padding for readability
+  padding(padding = 5, part = "all") %>% 
+  flextable::save_as_docx(path = "multivariate_table_os.docx") 
+```
