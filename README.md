@@ -19,5 +19,5 @@ This study performs a survival analysis to evaluate the efficacy of a three-drug
 * **Libraries:** `survival`, `ggsurvfit`, `tidyverse`, `flextable`.
 
 ## 📄 Reports & Code
-* **Executive Summary:** [Read the Findings (PDF)](HIV_Treatment_Efficacy_Report.pdf)
+* **Executive Summary:** [Read the Findings (PDF)](HIV_Survival_Analysis_Report.pdf)
 * **Technical Output:** [View Full R Code & Analysis (PDF)](Technical_Analysis_Code.pdf)
