@@ -18,6 +18,6 @@ This study performs a survival analysis to evaluate the efficacy of a three-drug
 * **Techniques:** Kaplan-Meier Estimation, Log-Rank Tests, Cox Proportional Hazards Models (Univariate & Multivariate).
 * **Libraries:** `survival`, `ggsurvfit`, `tidyverse`, `flextable`.
 
-## 📄 Full Report
-You can view the full interactive code and analysis [here](https://sanneglastra.github.io/HIV-Treatment-Survival-Analysis/).
-*(Note: This link will work after you complete Phase 4 below)*.
+## 📄 Reports & Code
+* **Executive Summary:** [Read the Findings (PDF)](HIV_Treatment_Efficacy_Report.pdf)
+* **Technical Output:** [View Full R Code & Analysis (PDF)](Technical_Analysis_Code.pdf)
